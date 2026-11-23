@@ -1,0 +1,219 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Private learner study profile storing target IELTS band, exam date, and completed roadmap steps.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the profile owner."
+        },
+        "displayName": {
+          "type": "string",
+          "maxLength": 120,
+          "description": "Learner display name shown inside the workspace."
+        },
+        "targetBand": {
+          "type": "number",
+          "description": "Target overall IELTS band score (4.0 to 9.0)."
+        },
+        "examDate": {
+          "type": "string",
+          "maxLength": 32,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "description": "Target IELTS exam date in YYYY-MM-DD format."
+        },
+        "completedRoadmapSteps": {
+          "type": "array",
+          "description": "Bounded list (max 24) of completed 12-week study roadmap step IDs."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the profile was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of the last profile update."
+        }
+      },
+      "required": [
+        "uid",
+        "displayName",
+        "targetBand",
+        "examDate",
+        "completedRoadmapSteps",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Attempt": {
+      "title": "Attempt",
+      "description": "Immutable record of a completed Reading, Listening, Writing, or Speaking practice session.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the learner who completed the attempt."
+        },
+        "skill": {
+          "type": "string",
+          "enum": ["reading", "listening", "writing", "speaking"],
+          "description": "IELTS exam skill practiced in this attempt."
+        },
+        "testId": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Identifier of the practice test or prompt attempted."
+        },
+        "testTitle": {
+          "type": "string",
+          "maxLength": 160,
+          "description": "Human-readable title of the attempted Cambridge-style test."
+        },
+        "band": {
+          "type": "number",
+          "description": "Calculated IELTS band score from 0.0 to 9.0."
+        },
+        "scoreText": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Compact raw score summary (e.g., 7/8 correct or 268 words)."
+        },
+        "durationSec": {
+          "type": "number",
+          "description": "Elapsed attempt duration in seconds (0 to 14400)."
+        },
+        "summary": {
+          "type": "string",
+          "maxLength": 1000,
+          "description": "Actionable rubric or solution breakdown for review in app/results."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the attempt was submitted."
+        }
+      },
+      "required": [
+        "uid",
+        "skill",
+        "testId",
+        "testTitle",
+        "band",
+        "scoreText",
+        "durationSec",
+        "summary",
+        "createdAt"
+      ]
+    },
+    "CustomTest": {
+      "title": "CustomTest",
+      "description": "Admin-managed Cambridge-style practice bank item published to the workspace library.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Unique practice bank item slug."
+        },
+        "skill": {
+          "type": "string",
+          "enum": ["reading", "listening", "writing", "speaking"],
+          "description": "Target IELTS skill for this test item."
+        },
+        "source": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "Source bank label such as Cambridge IELTS 20."
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 160,
+          "description": "Title of the passage, listening section, writing prompt, or cue card."
+        },
+        "prompt": {
+          "type": "string",
+          "maxLength": 4000,
+          "description": "Practice content or prompt body."
+        },
+        "published": {
+          "type": "boolean",
+          "description": "Whether this item is visible to signed-in learners."
+        },
+        "authorUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Admin UID who created this item."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when last updated."
+        }
+      },
+      "required": [
+        "id",
+        "skill",
+        "source",
+        "title",
+        "prompt",
+        "published",
+        "authorUid",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "AdminRecord": {
+      "title": "AdminRecord",
+      "description": "Server-provisioned RBAC marker identifying platform administrators.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Administrator Firebase Auth UID."
+        },
+        "role": {
+          "type": "string",
+          "enum": ["admin"],
+          "description": "Admin role literal."
+        }
+      },
+      "required": ["uid", "role"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Private learner profile document keyed by Firebase Auth UID."
+    },
+    "/users/{userId}/attempts/{attemptId}": {
+      "schema": { "$ref": "#/entities/Attempt" },
+      "description": "Subcollection of immutable four-skill IELTS practice attempt records for a learner."
+    },
+    "/testBank/{testId}": {
+      "schema": { "$ref": "#/entities/CustomTest" },
+      "description": "Admin-managed Cambridge-style practice bank items readable by verified signed-in users when published."
+    },
+    "/admins/{adminUid}": {
+      "schema": { "$ref": "#/entities/AdminRecord" },
+      "description": "Trusted RBAC marker collection for test bank administrators (read-only from client)."
+    }
+  }
+}

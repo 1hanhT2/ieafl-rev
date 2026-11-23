@@ -1,0 +1,300 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Reusable Hardened Primitives ---
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isVerifiedUser() && request.auth.uid == userId;
+    }
+
+    function isBootstrappedAdmin() {
+      return isVerifiedUser() && request.auth.token.email == 'bttbuitanthanh@gmail.com';
+    }
+
+    function isAdmin() {
+      return isBootstrappedAdmin() || (
+        isVerifiedUser() &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isValidSkill(skill) {
+      return skill is string && (
+        skill == 'reading' ||
+        skill == 'listening' ||
+        skill == 'writing' ||
+        skill == 'speaking'
+      );
+    }
+
+    // --- Validation Blueprints (Anti-Update-Gap) ---
+    function isValidUserProfile(data, userId) {
+      return data.keys().hasAll([
+          'uid',
+          'displayName',
+          'targetBand',
+          'examDate',
+          'completedRoadmapSteps',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'uid',
+          'displayName',
+          'targetBand',
+          'examDate',
+          'completedRoadmapSteps',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.uid is string &&
+        data.uid == userId &&
+        isValidId(data.uid) &&
+        data.displayName is string &&
+        data.displayName.size() >= 1 &&
+        data.displayName.size() <= 120 &&
+        data.targetBand is number &&
+        data.targetBand >= 4.0 &&
+        data.targetBand <= 9.0 &&
+        data.examDate is string &&
+        data.examDate.size() == 10 &&
+        data.examDate.matches('^\\d{4}-\\d{2}-\\d{2}$') &&
+        data.completedRoadmapSteps is list &&
+        data.completedRoadmapSteps.size() <= 24 &&
+        (
+          data.completedRoadmapSteps.size() == 0 ||
+          (
+            data.completedRoadmapSteps[0] is string &&
+            data.completedRoadmapSteps[0].size() >= 1 &&
+            data.completedRoadmapSteps[0].size() <= 32
+          )
+        ) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidAttempt(data, userId) {
+      return data.keys().hasAll([
+          'uid',
+          'skill',
+          'testId',
+          'testTitle',
+          'band',
+          'scoreText',
+          'durationSec',
+          'summary',
+          'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'uid',
+          'skill',
+          'testId',
+          'testTitle',
+          'band',
+          'scoreText',
+          'durationSec',
+          'summary',
+          'createdAt'
+        ]) &&
+        data.uid is string &&
+        data.uid == userId &&
+        data.uid == request.auth.uid &&
+        isValidId(data.uid) &&
+        isValidSkill(data.skill) &&
+        data.testId is string &&
+        data.testId.size() >= 1 &&
+        data.testId.size() <= 64 &&
+        data.testId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.testTitle is string &&
+        data.testTitle.size() >= 1 &&
+        data.testTitle.size() <= 160 &&
+        data.band is number &&
+        data.band >= 0.0 &&
+        data.band <= 9.0 &&
+        data.scoreText is string &&
+        data.scoreText.size() >= 1 &&
+        data.scoreText.size() <= 64 &&
+        data.durationSec is number &&
+        data.durationSec >= 0 &&
+        data.durationSec <= 14400 &&
+        data.summary is string &&
+        data.summary.size() >= 1 &&
+        data.summary.size() <= 1000 &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidCustomTest(data, testId) {
+      return data.keys().hasAll([
+          'id',
+          'skill',
+          'source',
+          'title',
+          'prompt',
+          'published',
+          'authorUid',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id',
+          'skill',
+          'source',
+          'title',
+          'prompt',
+          'published',
+          'authorUid',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.id is string &&
+        data.id == testId &&
+        data.id.size() >= 1 &&
+        data.id.size() <= 64 &&
+        data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
+        isValidSkill(data.skill) &&
+        data.source is string &&
+        data.source.size() >= 1 &&
+        data.source.size() <= 80 &&
+        data.title is string &&
+        data.title.size() >= 1 &&
+        data.title.size() <= 160 &&
+        data.prompt is string &&
+        data.prompt.size() >= 1 &&
+        data.prompt.size() <= 4000 &&
+        data.published is bool &&
+        data.authorUid is string &&
+        isValidId(data.authorUid) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    // --- Collection: /users/{userId} ---
+    match /users/{userId} {
+      allow get: if isVerifiedUser() && isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if false;
+
+      allow create: if isOwner(userId) &&
+        isValidId(userId) &&
+        isValidUserProfile(incoming(), userId) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+
+      allow update: if isVerifiedUser() &&
+        isValidId(userId) &&
+        isValidUserProfile(incoming(), userId) &&
+        incoming().uid == existing().uid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (
+          isAdmin() ||
+          (
+            isOwner(userId) &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['targetBand', 'examDate', 'displayName', 'updatedAt'])
+          ) ||
+          (
+            isOwner(userId) &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['completedRoadmapSteps', 'updatedAt'])
+          ) ||
+          (
+            isOwner(userId) &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['targetBand', 'examDate', 'displayName', 'completedRoadmapSteps', 'updatedAt'])
+          )
+        );
+
+      allow delete: if isValidId(userId) && (isOwner(userId) || isAdmin());
+
+      // --- Subcollection: /users/{userId}/attempts/{attemptId} ---
+      match /attempts/{attemptId} {
+        allow get: if isVerifiedUser() &&
+          isValidId(userId) &&
+          isValidId(attemptId) &&
+          (isOwner(userId) || isAdmin()) &&
+          exists(/databases/$(database)/documents/users/$(userId));
+
+        allow list: if isVerifiedUser() &&
+          (resource.data.uid == request.auth.uid || isBootstrappedAdmin());
+
+        allow create: if isOwner(userId) &&
+          isValidId(userId) &&
+          isValidId(attemptId) &&
+          isValidAttempt(incoming(), userId) &&
+          incoming().createdAt == request.time &&
+          exists(/databases/$(database)/documents/users/$(userId));
+
+        allow update: if false;
+
+        allow delete: if isVerifiedUser() &&
+          isValidId(userId) &&
+          isValidId(attemptId) &&
+          (isOwner(userId) || isAdmin()) &&
+          exists(/databases/$(database)/documents/users/$(userId));
+      }
+    }
+
+    // --- Collection: /testBank/{testId} ---
+    match /testBank/{testId} {
+      allow get: if isVerifiedUser() &&
+        isValidId(testId) &&
+        (existing().published == true || isAdmin());
+
+      allow list: if isVerifiedUser() &&
+        (resource.data.published == true || isBootstrappedAdmin());
+
+      allow create: if isVerifiedUser() &&
+        isValidId(testId) &&
+        isValidCustomTest(incoming(), testId) &&
+        incoming().authorUid == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        isAdmin();
+
+      allow update: if isVerifiedUser() &&
+        isValidId(testId) &&
+        isValidCustomTest(incoming(), testId) &&
+        incoming().id == existing().id &&
+        incoming().authorUid == existing().authorUid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        isAdmin() &&
+        (
+          incoming().diff(existing()).affectedKeys().hasOnly(['published', 'updatedAt']) ||
+          incoming().diff(existing()).affectedKeys().hasOnly(['title', 'source', 'prompt', 'skill', 'published', 'updatedAt'])
+        );
+
+      allow delete: if isVerifiedUser() && isValidId(testId) && isAdmin();
+    }
+
+    // --- Collection: /admins/{adminUid} ---
+    match /admins/{adminUid} {
+      allow get: if isOwner(adminUid) && isValidId(adminUid);
+      allow list: if false;
+      allow write: if false;
+    }
+  }
+}
