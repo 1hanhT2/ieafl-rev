@@ -14,6 +14,7 @@ import {
 } from './firebase';
 import { createWorkspaceController, type CloudSnapshot } from './workspace';
 import { initStudyAgent } from './studyAgent';
+import { initFooterLogoShader } from './footerLogoShader';
 import { enhanceIeaflSelects, closeAllIeaflDropdowns } from './ieaflSelect';
 import { BUILTIN_AVATARS } from './examiner3d';
 import {
@@ -294,6 +295,9 @@ dispatchCloudChanged();
 
 // Mount global IEAFL Gemini Study Agent (Google Search grounded + right-click selection help)
 initStudyAgent();
+
+// Mount WebGL GLSL Pac-Man chase hover shader on the footer IEAFL wordmark
+initFooterLogoShader();
 
 // Stylize any native <select> elements on initial non-workspace views & route changes
 enhanceIeaflSelects(document);

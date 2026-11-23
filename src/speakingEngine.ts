@@ -86,11 +86,21 @@ export function createSpeakingStageEngine() {
     const existing = wavBufferCache.get(key);
     if (existing) return existing;
 
-    const promise = requestGeminiTtsWav(text, voiceName, examMode).catch((err) => {
-      // Remove failed entry so retries can succeed
-      wavBufferCache.delete(key);
-      throw err;
-    });
+    const promise = requestGeminiTtsWav(text, voiceName, examMode)
+      .catch(async (firstErr) => {
+        const msg = firstErr instanceof Error ? firstErr.message : String(firstErr ?? '');
+        // Retry once after a short backoff if Gemini TTS hits transient rate-limit or network error
+        if (/429|quota|rate|502|503|network|fetch/i.test(msg)) {
+          await new Promise((r) => window.setTimeout(r, 700));
+          return requestGeminiTtsWav(text, voiceName, examMode);
+        }
+        throw firstErr;
+      })
+      .catch((err) => {
+        // Remove failed entry so retries can succeed later
+        wavBufferCache.delete(key);
+        throw err;
+      });
     wavBufferCache.set(key, promise);
     return promise;
   }
@@ -128,7 +138,7 @@ export function createSpeakingStageEngine() {
     }
 
     let cursor = 0;
-    const concurrency = Math.min(2, total);
+    const concurrency = 1;
 
     const worker = async () => {
       while (cursor < total) {
@@ -338,14 +348,30 @@ export function createSpeakingStageEngine() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       throw new Error('Microphone recording is not supported in this browser.');
     }
-    persistentMicStream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      },
-    });
-    return persistentMicStream;
+    try {
+      persistentMicStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+      return persistentMicStream;
+    } catch (err) {
+      const name = err && typeof err === 'object' && 'name' in err ? String((err as { name?: unknown }).name || '') : '';
+      const rawMsg = err instanceof Error ? err.message : String(err ?? '');
+      if (
+        name === 'NotAllowedError' ||
+        name === 'PermissionDeniedError' ||
+        /permission denied|not allowed|denied/i.test(rawMsg)
+      ) {
+        throw new Error('Microphone access was blocked by the browser (Permission denied).');
+      }
+      if (name === 'NotFoundError' || /not found|no device/i.test(rawMsg)) {
+        throw new Error('No microphone input device was detected.');
+      }
+      throw new Error(rawMsg || 'Could not access microphone.');
+    }
   }
 
   function releaseMicrophone(): void {

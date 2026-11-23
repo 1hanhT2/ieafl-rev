@@ -255,6 +255,7 @@ export function createWorkspaceController(
   let speakingSpeechHeard = false;
   let activeStageRecorder: StageRecorderController | null = null;
   let speakingMicMuted = false;
+  let speakingMicUnavailableReason = '';
 
   // Behind-the-scenes Preload State (3D model + pre-generated Gemini TTS clips)
   let speakingPreloadState: SpeakingPreloadState = 'idle';
@@ -548,6 +549,7 @@ export function createWorkspaceController(
     speakingResult = null;
     speakingSavedCloud = false;
     speakingTranscriptOpen = false;
+    speakingMicUnavailableReason = '';
   }
 
   function clearAllTimers(): void {
@@ -639,7 +641,7 @@ export function createWorkspaceController(
     render();
     try {
       await saveAttempt(snap.user.uid, payload);
-      setNotice(`Saved Band ${payload.band.toFixed(1)} (${payload.testTitle}) to your Firebase attempt history.`, 'ok');
+      setNotice(`Saved ${payload.scoreText} (${payload.testTitle}) to your Firebase attempt history.`, 'ok');
       return true;
     } catch (err) {
       setNotice(err instanceof Error ? err.message : 'Could not save attempt to Firestore.', 'err');
@@ -1327,10 +1329,15 @@ export function createWorkspaceController(
           <div class="ws-3d-clock-cluster">
             ${
               speakingPhase === 'candidate_speaking'
-                ? `<div class="ws-mic-meter" aria-label="Microphone voice level">
-                    <span class="ws-mic-dot${speakingMicMuted || speakingPaused ? ' is-muted' : ''}"></span>
-                    <div class="ws-mic-meter-track"><div class="ws-mic-meter-fill" id="ws-mic-meter-fill"></div></div>
-                  </div>`
+                ? speakingMicUnavailableReason
+                  ? `<div class="ws-mic-meter" aria-label="Microphone unavailable — timer mode">
+                      <span class="ws-mic-dot is-muted"></span>
+                      <span class="t-micro" style="padding:0 6px;white-space:nowrap;">Timer Mode</span>
+                    </div>`
+                  : `<div class="ws-mic-meter" aria-label="Microphone voice level">
+                      <span class="ws-mic-dot${speakingMicMuted || speakingPaused ? ' is-muted' : ''}"></span>
+                      <div class="ws-mic-meter-track"><div class="ws-mic-meter-fill" id="ws-mic-meter-fill"></div></div>
+                    </div>`
                 : ''
             }
             <div class="ws-3d-clock t-lead tnum ${speakingPaused ? 'is-paused' : speakingPhase === 'prep' ? 'is-prep' : speakingPhase === 'candidate_speaking' ? 'is-live' : ''}" id="ws-speaking-clock">${fmtClock(speakingTimeLeft)}</div>
@@ -1510,7 +1517,11 @@ export function createWorkspaceController(
                   }
                   ${
                     speakingPhase === 'candidate_speaking' && !speakingPaused
-                      ? `<button type="button" class="chip-toggle t-micro" id="ws-speak-mute-btn" aria-pressed="${speakingMicMuted ? 'true' : 'false'}">(${speakingMicMuted ? 'Unmute Mic' : 'Mute Mic'})</button>
+                      ? `${
+                          speakingMicUnavailableReason
+                            ? `<button type="button" class="chip-toggle t-micro" id="ws-speak-retry-mic-btn">(Enable Mic)</button>`
+                            : `<button type="button" class="chip-toggle t-micro" id="ws-speak-mute-btn" aria-pressed="${speakingMicMuted ? 'true' : 'false'}">(${speakingMicMuted ? 'Unmute Mic' : 'Mute Mic'})</button>`
+                        }
                          <button type="button" class="btn-primary btn-sm t-micro" id="ws-speak-finish-stage-btn"><span>${nextTurn ? 'Finish Stage →' : 'Finish &amp; Score →'}</span></button>`
                       : ''
                   }
@@ -2368,55 +2379,57 @@ export function createWorkspaceController(
       void completeActiveStageAndTransition(token);
     });
 
-    try {
-      activeStageRecorder = await speakingEngine.startStageRecording({
-        silenceDelaySec: silenceDelay,
-        autoAdvance: prefs.autoAdvance,
-        minSpeakGraceSec: minGraceSec,
-        noSpeechCheckInSec,
-        onLevel(rms) {
-          if (token !== speakingSessionToken || speakingPaused || speakingCheckInBusy) return;
-          examiner3d.setAudioLevels(0, rms);
-          const fill = document.getElementById('ws-mic-meter-fill');
-          if (fill) {
-            fill.style.width = `${Math.min(100, Math.round(rms * 140))}%`;
-          }
-        },
-        onSpeechDetected() {
-          if (token !== speakingSessionToken) return;
-          speakingSpeechHeard = true;
-          speakingCheckInCount = 0;
-          if (speakingPauseOfferVisible) {
-            speakingPauseOfferVisible = false;
-            const offerEl = document.getElementById('ws-pause-offer-card');
-            if (offerEl) offerEl.style.display = 'none';
-          }
-        },
-        onNoSpeechCheckIn() {
-          if (token !== speakingSessionToken || speakingPaused) return;
-          void handleNoSpeechCheckIn(token);
-        },
-        onSilenceCountdown(remainingSec, totalSec) {
-          if (token !== speakingSessionToken) return;
-          updateSilenceHud(remainingSec, totalSec);
-        },
-        onAutoSilenceComplete() {
-          if (token !== speakingSessionToken || speakingPaused) return;
-          void completeActiveStageAndTransition(token);
-        },
-      });
-      if (speakingPaused && activeStageRecorder) {
-        activeStageRecorder.setPaused(true);
+    if (!speakingMicUnavailableReason) {
+      try {
+        activeStageRecorder = await speakingEngine.startStageRecording({
+          silenceDelaySec: silenceDelay,
+          autoAdvance: prefs.autoAdvance,
+          minSpeakGraceSec: minGraceSec,
+          noSpeechCheckInSec,
+          onLevel(rms) {
+            if (token !== speakingSessionToken || speakingPaused || speakingCheckInBusy) return;
+            examiner3d.setAudioLevels(0, rms);
+            const fill = document.getElementById('ws-mic-meter-fill');
+            if (fill) {
+              fill.style.width = `${Math.min(100, Math.round(rms * 140))}%`;
+            }
+          },
+          onSpeechDetected() {
+            if (token !== speakingSessionToken) return;
+            speakingSpeechHeard = true;
+            speakingCheckInCount = 0;
+            if (speakingPauseOfferVisible) {
+              speakingPauseOfferVisible = false;
+              const offerEl = document.getElementById('ws-pause-offer-card');
+              if (offerEl) offerEl.style.display = 'none';
+            }
+          },
+          onNoSpeechCheckIn() {
+            if (token !== speakingSessionToken || speakingPaused) return;
+            void handleNoSpeechCheckIn(token);
+          },
+          onSilenceCountdown(remainingSec, totalSec) {
+            if (token !== speakingSessionToken) return;
+            updateSilenceHud(remainingSec, totalSec);
+          },
+          onAutoSilenceComplete() {
+            if (token !== speakingSessionToken || speakingPaused) return;
+            void completeActiveStageAndTransition(token);
+          },
+        });
+        if (speakingPaused && activeStageRecorder) {
+          activeStageRecorder.setPaused(true);
+        }
+      } catch (err) {
+        if (token !== speakingSessionToken) return;
+        speakingMicUnavailableReason =
+          err instanceof Error ? err.message : 'Microphone access was blocked by the browser.';
+        setNotice(
+          `${speakingMicUnavailableReason} Running in 3D Timer Mode — enable Microphone in browser settings anytime or click Finish Stage →.`,
+          'err'
+        );
+        render();
       }
-    } catch (err) {
-      if (token !== speakingSessionToken) return;
-      setNotice(
-        err instanceof Error
-          ? `${err.message} Allow microphone access, then click Restart Exam.`
-          : 'Microphone permission was denied. Allow microphone access to record speaking stages.',
-        'err'
-      );
-      render();
     }
   }
 
@@ -2521,20 +2534,78 @@ export function createWorkspaceController(
       speakingTranscriptOpen = false;
     }
 
-    // Request mic permission ONCE up front so transitions never stall on permission dialogs
+    // Request mic permission ONCE up front; if blocked by browser/iframe, proceed gracefully in 3D Timer Mode
     try {
       await speakingEngine.ensureMicrophone();
+      speakingMicUnavailableReason = '';
+      if (/microphone|permission denied/i.test(statusNotice)) {
+        statusNotice = '';
+        statusKind = '';
+      }
     } catch (err) {
+      speakingMicUnavailableReason =
+        err instanceof Error ? err.message : 'Microphone permission was denied.';
       setNotice(
-        err instanceof Error ? err.message : 'Microphone permission is required for the Speaking exam.',
+        `${speakingMicUnavailableReason} Starting 3D Speaking stages in Timer Mode — enable Microphone in browser site settings and click (Enable Mic) anytime, or use Finish Stage →.`,
         'err'
       );
-      render();
-      return;
     }
     if (token !== speakingSessionToken) return;
 
     await runSpeakingStage(startIdx, token);
+  }
+
+  async function retryAttachMicrophoneDuringStage(): Promise<void> {
+    const token = speakingSessionToken;
+    try {
+      await speakingEngine.ensureMicrophone();
+      speakingMicUnavailableReason = '';
+      setNotice('Microphone connected — voice recording and auto-advance active.', 'ok');
+      if (speakingPhase === 'candidate_speaking' && !activeStageRecorder) {
+        const activeTest = getActiveSpeakingTest();
+        const turn = activeTest.turns[speakingTurnIdx];
+        const prefs = getExaminerSettings();
+        const isLongTurn = Boolean(turn?.prepSec);
+        activeStageRecorder = await speakingEngine.startStageRecording({
+          silenceDelaySec: prefs.silenceDelaySec,
+          autoAdvance: prefs.autoAdvance,
+          minSpeakGraceSec: isLongTurn ? 8.0 : 2.4,
+          noSpeechCheckInSec: isLongTurn ? 11.0 : 9.0,
+          onLevel(rms) {
+            if (token !== speakingSessionToken || speakingPaused || speakingCheckInBusy) return;
+            examiner3d.setAudioLevels(0, rms);
+            const fill = document.getElementById('ws-mic-meter-fill');
+            if (fill) fill.style.width = `${Math.min(100, Math.round(rms * 140))}%`;
+          },
+          onSpeechDetected() {
+            if (token !== speakingSessionToken) return;
+            speakingSpeechHeard = true;
+            speakingCheckInCount = 0;
+          },
+          onNoSpeechCheckIn() {
+            if (token !== speakingSessionToken || speakingPaused) return;
+            void handleNoSpeechCheckIn(token);
+          },
+          onSilenceCountdown(remainingSec, totalSec) {
+            if (token !== speakingSessionToken) return;
+            updateSilenceHud(remainingSec, totalSec);
+          },
+          onAutoSilenceComplete() {
+            if (token !== speakingSessionToken || speakingPaused) return;
+            void completeActiveStageAndTransition(token);
+          },
+        });
+      }
+      render();
+    } catch (err) {
+      speakingMicUnavailableReason =
+        err instanceof Error ? err.message : 'Microphone access is still blocked by the browser.';
+      setNotice(
+        `${speakingMicUnavailableReason} Allow Microphone permission in your browser address bar, or continue practicing in Timer Mode.`,
+        'err'
+      );
+      render();
+    }
   }
 
   function bindEvents(): void {
@@ -2991,6 +3062,11 @@ export function createWorkspaceController(
         speakingMicMuted = !speakingMicMuted;
         activeStageRecorder.setMuted(speakingMicMuted);
         render();
+      });
+
+      rootEl.querySelector('#ws-speak-retry-mic-btn')?.addEventListener('click', () => {
+        if (speakingPaused) return;
+        void retryAttachMicrophoneDuringStage();
       });
 
       rootEl.querySelector('#ws-speak-finish-stage-btn')?.addEventListener('click', () => {
