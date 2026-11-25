@@ -451,9 +451,16 @@ export async function transcribeAudioBlob(blob: Blob, contextHint?: string): Pro
       contextHint,
     }),
   });
-  const data = (await res.json()) as { text?: string; error?: string };
+  let data: { text?: string; error?: string } = {};
+  try {
+    data = (await res.json()) as { text?: string; error?: string };
+  } catch {
+    if (!res.ok) {
+      throw new Error(`Gemini transcription failed (HTTP ${res.status}).`);
+    }
+  }
   if (!res.ok) {
-    throw new Error(data.error || 'Gemini transcription failed.');
+    throw new Error(data.error || `Gemini transcription failed (HTTP ${res.status}).`);
   }
   return (data.text || '').trim();
 }

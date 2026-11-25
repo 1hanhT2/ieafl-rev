@@ -246,6 +246,7 @@ export function createWorkspaceController(
   let speakingTransitionCallback: (() => void) | null = null;
   let speakingSessionToken = 0;
   let speakingResponses: Record<number, string> = {};
+  let speakingStageErrors: Record<number, string> = {};
   let speakingStageStates: Record<number, StageProgressState> = {};
   let speakingStagePromises: Record<number, Promise<void>> = {};
   let speakingNotes = '';
@@ -543,6 +544,7 @@ export function createWorkspaceController(
     speakingPhase = 'idle';
     speakingTimeLeft = activeTest.turns[0]?.speakSec ?? 45;
     speakingResponses = {};
+    speakingStageErrors = {};
     speakingStageStates = {};
     speakingStagePromises = {};
     speakingNotes = '';
@@ -1539,24 +1541,57 @@ export function createWorkspaceController(
       ${
         speakingPhase === 'complete' && speakingResult
           ? (() => {
-              const nativeSpeak = buildNativeRubricScore(
-                activeTest.examId,
-                activeTest.sectionKey,
-                speakingResult.qualityRatio,
-                speakingResult.overall,
-                `${speakingResult.turnsAnswered}/${turns.length} stages`
-              );
+              const hasSpeech =
+                speakingResult.hasSpeech &&
+                speakingResult.overall !== null &&
+                speakingResult.qualityRatio !== null;
               const isIeltsS = activeTest.examId === 'ielts';
-              const fmtCrit = (bandVal: number) =>
-                isIeltsS ? bandVal.toFixed(1) : `${Math.round((bandVal / 9) * 100)}%`;
+              const examCfg = EXAM_CONFIGS[activeTest.examId];
+              const nativeSpeak = hasSpeech
+                ? buildNativeRubricScore(
+                    activeTest.examId,
+                    activeTest.sectionKey,
+                    speakingResult.qualityRatio as number,
+                    speakingResult.overall as number,
+                    `${speakingResult.turnsAnswered}/${turns.length} stages`
+                  )
+                : null;
+              const sectionBadge = nativeSpeak
+                ? nativeSpeak.sectionBadge
+                : `${examCfg.short} · Speaking`;
+              const headlineText = nativeSpeak
+                ? nativeSpeak.headline
+                : isIeltsS
+                  ? 'Overall Speaking Band N/A'
+                  : 'Speaking Score: N/A';
+              const fmtCrit = (bandVal: number | null) => {
+                if (bandVal === null) return 'N/A';
+                return isIeltsS ? bandVal.toFixed(1) : `${Math.round((bandVal / 9) * 100)}%`;
+              };
+              const uniqueStageErrs = Array.from(
+                new Set(Object.values(speakingStageErrors).map((e) => e.trim()).filter(Boolean))
+              );
+              const reportNotes = [...speakingResult.notes];
+              if (!hasSpeech && speakingMicUnavailableReason) {
+                reportNotes.unshift(`Microphone issue: ${speakingMicUnavailableReason}`);
+              } else if (!hasSpeech && uniqueStageErrs.length > 0) {
+                reportNotes.unshift(`Transcription error: ${uniqueStageErrs[0]}`);
+              }
+              const cloudStatusText = !hasSpeech
+                ? 'Not saved (no speech captured)'
+                : speakingSavedCloud
+                  ? 'Saved to Firebase'
+                  : snap.user
+                    ? 'Syncing…'
+                    : 'Local score only';
               return `<div class="ws-rubric-panel" style="margin-top:16px;">
               <div class="ws-rubric-head">
                 <div>
-                  <p class="t-micro">(${esc(nativeSpeak.sectionBadge)} Report · ${speakingResult.turnsAnswered}/${turns.length} Stages Captured)</p>
-                  <h3 class="t-lead tnum">${esc(nativeSpeak.headline)}</h3>
+                  <p class="t-micro">(${esc(sectionBadge)} Report · ${speakingResult.turnsAnswered}/${turns.length} Stages Captured)</p>
+                  <h3 class="t-lead tnum">${esc(headlineText)}</h3>
                 </div>
                 <div class="ws-toolbar-group">
-                  <span class="t-micro">${speakingSavedCloud ? 'Saved to Firebase' : snap.user ? 'Syncing…' : 'Local score only'}</span>
+                  <span class="t-micro">${esc(cloudStatusText)}</span>
                   <button type="button" class="chip-toggle t-micro" id="ws-speak-toggle-transcripts-btn">
                     (${speakingTranscriptOpen ? 'Hide Stage Transcripts' : 'View Captured Transcripts'})
                   </button>
@@ -1569,7 +1604,7 @@ export function createWorkspaceController(
                 <div class="ws-rubric-cell"><span class="t-micro">Pronunciation</span><strong class="t-lead">${fmtCrit(speakingResult.pron)}</strong></div>
               </div>
               <ul class="access-list t-small" style="margin-top:12px;">
-                ${speakingResult.notes.map((n) => `<li>${esc(n)}</li>`).join('')}
+                ${reportNotes.map((n) => `<li>${esc(n)}</li>`).join('')}
               </ul>
               ${
                 speakingTranscriptOpen
@@ -1577,9 +1612,16 @@ export function createWorkspaceController(
                       ${turns
                         .map((t, idx) => {
                           const txt = (speakingResponses[idx] || '').trim();
+                          const stageErr = (speakingStageErrors[idx] || '').trim();
                           return `<div class="ws-stage-transcript-item">
                             <p class="t-micro fw-600">STAGE ${String(idx + 1).padStart(2, '0')} · ${esc(t.label)}</p>
-                            <p class="t-small" style="margin-top:4px;">${txt ? esc(txt) : '<em style="opacity:0.65;">(No speech captured in this stage)</em>'}</p>
+                            <p class="t-small" style="margin-top:4px;">${
+                              txt
+                                ? esc(txt)
+                                : stageErr
+                                  ? `<em style="opacity:0.75;">(Transcription error: ${esc(stageErr)})</em>`
+                                  : '<em style="opacity:0.65;">(No speech captured in this stage)</em>'
+                            }</p>
                           </div>`;
                         })
                         .join('')}
@@ -2258,6 +2300,29 @@ export function createWorkspaceController(
     speakingPhase = 'complete';
     examiner3d.setMood('idle');
     playStageClearChime();
+
+    if (
+      !speakingResult.hasSpeech ||
+      speakingResult.overall === null ||
+      speakingResult.qualityRatio === null ||
+      speakingResult.fc === null ||
+      speakingResult.lr === null ||
+      speakingResult.gra === null ||
+      speakingResult.pron === null
+    ) {
+      speakingSavedCloud = false;
+      const firstErr = Object.values(speakingStageErrors).find((e) => e.trim());
+      if (firstErr) {
+        setNotice(`No speech was registered (${firstErr}). Score left as N/A and not saved.`, 'err');
+      } else if (speakingMicUnavailableReason) {
+        setNotice(`No speech was captured (${speakingMicUnavailableReason}). Score left as N/A and not saved.`, 'err');
+      } else {
+        setNotice('No speech was captured in this session. Score left as N/A and not saved to history.', 'err');
+      }
+      render();
+      return;
+    }
+
     render();
 
     const totalSec = activeTest.turns.reduce((acc, t) => acc + t.speakSec, 0);
@@ -2307,6 +2372,7 @@ export function createWorkspaceController(
     // Kick off reliable background Gemini 3.5 Transcribe bound strictly to capturedIdx
     if (recordedBlob && recordedBlob.size >= 400) {
       speakingStageStates[capturedIdx] = 'transcribing';
+      delete speakingStageErrors[capturedIdx];
       const transcribeTask = speakingEngine
         .transcribeStageBlob(recordedBlob, capturedTurn?.label || `Stage ${capturedIdx + 1}`)
         .then((text) => {
@@ -2320,8 +2386,13 @@ export function createWorkspaceController(
             render();
           }
         })
-        .catch(() => {
+        .catch((err: unknown) => {
+          const errMsg = err instanceof Error ? err.message : 'Transcription request failed.';
+          speakingStageErrors[capturedIdx] = errMsg;
           speakingStageStates[capturedIdx] = 'cleared';
+          if (activeTab === 'speaking' && speakingPhase !== 'candidate_speaking') {
+            render();
+          }
         });
       speakingStagePromises[capturedIdx] = transcribeTask;
     } else {
@@ -2526,6 +2597,7 @@ export function createWorkspaceController(
 
     if (startIdx === 0) {
       speakingResponses = {};
+      speakingStageErrors = {};
       speakingStageStates = {};
       speakingStagePromises = {};
       speakingNotes = '';

@@ -1960,12 +1960,13 @@ export function evaluateWritingRubric(text: string, minWords: number, isTask1: b
 }
 
 export interface SpeakingRubricResult {
-  overall: number;
-  qualityRatio: number;
-  fc: number;
-  lr: number;
-  gra: number;
-  pron: number;
+  hasSpeech: boolean;
+  overall: number | null;
+  qualityRatio: number | null;
+  fc: number | null;
+  lr: number | null;
+  gra: number | null;
+  pron: number | null;
   totalWords: number;
   turnsAnswered: number;
   notes: string[];
@@ -1978,20 +1979,41 @@ export function evaluateSpeakingRubric(
   const entries = Object.values(responses).map((s) => s.trim()).filter(Boolean);
   const turnsAnswered = entries.length;
   const fullText = entries.join(' ');
-  const wordsArr = fullText ? fullText.split(/\s+/).filter(Boolean) : [];
+  const wordsArr = fullText ? fullText.split(/\s+/).filter((w) => /[a-z0-9]/i.test(w)) : [];
   const totalWords = wordsArr.length;
-  const uniqueRatio = totalWords > 0 ? new Set(wordsArr.map((w) => w.toLowerCase().replace(/[^a-z']/g, ''))).size / totalWords : 0;
-  const part2Words = (responses[2] || '').trim().split(/\s+/).filter(Boolean).length;
+
+  if (turnsAnswered === 0 || totalWords === 0) {
+    return {
+      hasSpeech: false,
+      overall: null,
+      qualityRatio: null,
+      fc: null,
+      lr: null,
+      gra: null,
+      pron: null,
+      totalWords: 0,
+      turnsAnswered: 0,
+      notes: [
+        `No speech was registered across ${totalTurns} stage${totalTurns === 1 ? '' : 's'} (0 words captured).`,
+        'Overall Speaking Band and criterion scores are left as N/A instead of estimating without captured audio.',
+        'Check your microphone input and browser permission, then run the mock interview again.',
+      ],
+    };
+  }
+
+  const uniqueRatio = new Set(wordsArr.map((w) => w.toLowerCase().replace(/[^a-z']/g, ''))).size / totalWords;
+  const part2Words = (responses[2] || '').trim().split(/\s+/).filter((w) => /[a-z0-9]/i.test(w)).length;
 
   const roundHalf = (n: number) => Math.min(9.0, Math.max(4.0, Math.round(n * 2) / 2));
 
-  let fc = 5.0 + Math.min(2.0, (turnsAnswered / Math.max(1, totalTurns)) * 1.5);
+  let fc = 4.5 + Math.min(2.5, (turnsAnswered / Math.max(1, totalTurns)) * 2.0);
   if (part2Words >= 120) fc += 1.0;
   else if (part2Words >= 65) fc += 0.5;
+  if (totalWords < 35) fc = Math.min(fc, 4.5);
 
-  let lr = 5.0 + (uniqueRatio >= 0.45 ? 1.0 : 0.5) + (totalWords >= 220 ? 1.0 : 0.5);
-  let gra = 5.5 + (/\b(although|however|whereas|because|which|would have|used to)\b/i.test(fullText) ? 1.5 : 0.5);
-  let pron = 5.5 + (turnsAnswered >= 4 ? 1.0 : 0.5) + (totalWords >= 180 ? 0.5 : 0);
+  let lr = 4.5 + (uniqueRatio >= 0.45 ? 1.0 : 0.5) + (totalWords >= 220 ? 1.5 : totalWords >= 90 ? 1.0 : 0.5);
+  let gra = 5.0 + (/\b(although|however|whereas|because|which|would have|used to)\b/i.test(fullText) ? 1.5 : 0.5) + (totalWords >= 120 ? 0.5 : 0);
+  let pron = 5.0 + (turnsAnswered >= 4 ? 1.5 : turnsAnswered >= 2 ? 1.0 : 0.5) + (totalWords >= 180 ? 0.5 : 0);
 
   fc = roundHalf(fc);
   lr = roundHalf(lr);
@@ -2009,7 +2031,7 @@ export function evaluateSpeakingRubric(
 
   const qualityRatio = Math.max(0.35, Math.min(0.98, ((fc + lr + gra + pron) / 4) / 9.0));
 
-  return { overall, qualityRatio, fc, lr, gra, pron, totalWords, turnsAnswered, notes };
+  return { hasSpeech: true, overall, qualityRatio, fc, lr, gra, pron, totalWords, turnsAnswered, notes };
 }
 
 export const SKILL_META: Record<SkillId, { label: string; route: string; color: string; timing: string }> = {

@@ -486,7 +486,7 @@ export function createSpeakingStageEngine() {
         }
       }
 
-      const speechThreshold = Math.max(0.018, noiseFloor * 2.15);
+      const speechThreshold = Math.max(0.014, Math.min(0.055, noiseFloor * 1.9));
 
       if (!muted && rawRms >= speechThreshold) {
         speechAccumMs += dtMs;
@@ -620,7 +620,16 @@ export function createSpeakingStageEngine() {
     stageLabel: string
   ): Promise<string> {
     if (!blob || blob.size < 400) return '';
-    return transcribeAudioBlob(blob, stageLabel);
+    try {
+      return await transcribeAudioBlob(blob, stageLabel);
+    } catch (firstErr) {
+      const msg = firstErr instanceof Error ? firstErr.message : String(firstErr ?? '');
+      if (/429|quota|rate|500|502|503|network|fetch/i.test(msg)) {
+        await new Promise((r) => window.setTimeout(r, 650));
+        return transcribeAudioBlob(blob, stageLabel);
+      }
+      throw firstErr;
+    }
   }
 
   function dispose(): void {

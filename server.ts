@@ -266,10 +266,10 @@ async function startServer(): Promise<void> {
           ? mimeType.split(';')[0]
           : 'audio/webm';
 
-      const ai = createGeminiClient();
+      const ai = createGeminiClient('v1beta');
       const promptText = contextHint
-        ? `Transcribe this spoken student recording accurately with natural punctuation. Context: ${String(contextHint).slice(0, 180)}. Return only the clean transcription.`
-        : 'Transcribe this spoken audio accurately with natural punctuation. Return only the clean transcription.';
+        ? `Transcribe this spoken student recording accurately with natural punctuation. Context: ${String(contextHint).slice(0, 180)}. Return only the clean transcription, or an empty string if no speech is audible.`
+        : 'Transcribe this spoken audio accurately with natural punctuation. Return only the clean transcription, or an empty string if no speech is audible.';
 
       const response = await ai.models.generateContent({
         model: 'gemini-3.5-transcribe',
@@ -286,11 +286,19 @@ async function startServer(): Promise<void> {
         },
       });
 
+      const rawText = (response.text || '').trim();
+      const cleanedText = /^(\[?\s*(silence|no speech|inaudible|background noise|music|blank_audio)\s*\]?|\(?\s*(silence|no speech|inaudible)\s*\)?)$/i.test(
+        rawText
+      )
+        ? ''
+        : rawText;
+
       res.json({
-        text: (response.text || '').trim(),
+        text: cleanedText,
       });
     } catch (err) {
       const { status, message } = formatGeminiError(err);
+      console.error('[Gemini Transcribe Error]', status, message);
       res.status(status).json({ error: message });
     }
   });
